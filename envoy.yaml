@@ -1,0 +1,109 @@
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 8001 }
+
+
+static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8010 }
+      filter_chains:
+      - filters:
+        - name: envoy.http_connection_manager
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            stat_prefix: ingress_http
+            codec_type: AUTO
+            route_config:
+              name: local_route
+              request_headers_to_remove: ["Authorization"]
+              virtual_hosts:
+              - name: local_service
+                domains: ["*"]
+                routes:
+                - match:
+                    prefix: "/force-host-rewrite"
+                  route:
+                    cluster: dynamic_forward_proxy_cluster
+                    rate_limits:
+                    - stage: 0
+                      actions:
+                        - {generic_key: {descriptor_value: "force-host-rewrite"}}
+                  typed_per_filter_config:
+                    envoy.filters.http.dynamic_forward_proxy:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.PerRouteConfig
+                      host_rewrite_literal: www.example.org
+                - match: { prefix: "/" }
+                  route: 
+                    cluster: dynamic_forward_proxy_cluster
+                    rate_limits:
+                      - stage: 0
+                        actions:
+                          - {request_headers: {header_name: "X-Host-Port", descriptor_key: "ratelimitkey"}}
+                  typed_per_filter_config:
+                    envoy.filters.http.dynamic_forward_proxy:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.PerRouteConfig
+                      host_rewrite_header: X-Host-Port
+            http_filters:
+            - name: envoy.rate_limit
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+                domain: dynamic_forward_proxy_cluster
+                stage: 0
+                failure_mode_deny: false
+                rate_limit_service:
+                  grpc_service:
+                    envoy_grpc:
+                      cluster_name: rate_limit_cluster
+                    timeout: 0.25s
+            - name: envoy.filters.http.dynamic_forward_proxy
+              typed_config:
+                "@type": type.googleapis.com/envoy.config.filter.http.dynamic_forward_proxy.v2alpha.FilterConfig
+                dns_cache_config:
+                  name: dynamic_forward_proxy_cache_config
+                  dns_lookup_family: V4_ONLY
+            - name: envoy.router
+  clusters:
+  # - name: backend
+  #   connect_timeout: 0.25s
+  #   type: STRICT_DNS
+  #   lb_policy: round_robin
+  #   load_assignment:
+  #     cluster_name: backend
+  #     endpoints:
+  #     - lb_endpoints:
+  #       - endpoint:
+  #           address:
+  #             socket_address:
+  #               address: backend
+  #               port_value: 8123
+
+  - name: rate_limit_cluster
+    type: strict_dns
+    connect_timeout: 0.25s
+    lb_policy: round_robin
+    http2_protocol_options: {}
+    hosts:
+    - socket_address:
+        address: ratelimit
+        port_value: 8081
+
+  - name: dynamic_forward_proxy_cluster
+    connect_timeout: 1s
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config:
+          name: dynamic_forward_proxy_cache_config
+          dns_lookup_family: V4_ONLY
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        common_tls_context:
+          validation_context:
+            trusted_ca: {filename: /etc/ssl/certs/ca-certificates.crt}

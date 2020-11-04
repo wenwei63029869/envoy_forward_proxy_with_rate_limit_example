@@ -1,0 +1,12 @@
+---
+domain: dynamic_forward_proxy_cluster
+descriptors:
+  - key: generic_key
+    value: force-host-rewrite
+    rate_limit:
+      requests_per_unit: 1
+      unit: minute
+  - key: ratelimitkey
+    rate_limit:
+      requests_per_unit: 1
+      unit: second

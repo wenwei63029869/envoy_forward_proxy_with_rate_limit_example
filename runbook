@@ -1,0 +1,7 @@
+Send requests using normal while loop: 
+while true; do sleep 0.1 && curl -s -o /dev/null -w "%{http_code}\n" localhost:8010/ -H "X-Host-Port:www.google.com"; done
+
+Load testing using h2load:
+h2load --h1 -c 5 -n 50 "http://localhost:8010" -H "X-Host-Port:www.example.com"
+
+docker-compose up --build -d
